@@ -164,12 +164,94 @@ static void bitmap_init(int start, int num, int nbits)
 
 }
 
+/*find if a specific bit is set inside a byte
+Return 1 if the bit is set in this position or 0 otherwise
+*/
+static int isBitSet (unsigned char c, int n) {
+    static unsigned char mask[] = {128, 64, 32, 16, 8, 4, 2, 1};
+    return ((c & mask[n]) != 0);
+}
+
+/* Set a specific bit inside a byte
+Return the byte after the bit was set at position n
+*/
+static char setBit (unsigned char c, int n) {
+    static unsigned char mask[] = {128, 64, 32, 16, 8, 4, 2, 1};
+    return (c | mask[n]);
+}
+
 // set the first unused bit from a bitmap of 'nbits' bits (flip the
 // first zero appeared in the bitmap to one) and return its location;
 // return -1 if the bitmap is already full (no more zeros)
 static int bitmap_first_unused(int start, int num, int nbits)
 {
-  /* YOUR CODE */
+  int bytes_set_to_one = nbits / 8;           // Number of bytes to set to 1
+  int remaining_bits = nbits % 8;             // Remainder bits after the last byte set to 1
+  int last_block = 0;                        // am I in the last byte?
+  char bitmap_buf[SECTOR_SIZE];              //Buffer sector
+  int location = -1;
+
+  int i;
+  for(i = start; i < (start + num); i++){     //  Check all bytes of each sector
+
+    if(bytes_set_to_one < SECTOR_SIZE){ //if the last sector
+      last_block = 1;
+    }
+
+    if(Disk_Read(i, bitmap_buf) < 0){ // Read the sector
+      dprintf("Oops, failed reading the block %d\n" , i);
+      osErrno = E_GENERAL;
+      return -1;
+    }
+
+    int a_byte;
+    int bit;
+    int limit;
+
+    if(last_block == 1){ // Is this the last sector?
+      limit = bytes_set_to_one;
+    }else{ //Else check more than one sector
+      limit = SECTOR_SIZE;
+    }
+
+    for(a_byte = 0; a_byte < limit; a_byte++){ //Check each byte in each sector
+      for(bit = 0; bit < 8; bit++){  //Checking each bit inside this byte
+        location++;
+        if(!isBitSet(bitmap_buf[b], bit)){
+
+          bitmap_buf[b] = setBit(bitmap_buf[b], bit);
+
+          if(Disk_Write(i, bitmap_buf) < 0) { //Write the sector back
+            dprintf("Oops, failed writting the block %d\n" , i);
+            osErrno = E_GENERAL;
+            return -1;
+          }
+          return location;
+        }
+
+      }
+    }
+
+
+    //Do a last check
+    //check the last bits in the last incompleted byte
+    if(final_block == 1){
+      for(bit = 0; bit < remaining_bits ; bit++){  //Check the remaining bits in this byte
+        location ++;
+        if(!isBitSet(bitmap_buf[b], bit)){
+           bitmap_buf[b] = setBit(bitmap_buf[b], bit); //Set this bit
+
+          if(Disk_Write(i, bitmap_buf) < 0) { //Write the sector back
+            dprintf("Oops, failed writting the block %d\n" , i);
+            osErrno = E_GENERAL;
+            return -1;
+          }
+          return location;
+        }
+      }
+    }
+
+  }
   return -1;
 }
 
