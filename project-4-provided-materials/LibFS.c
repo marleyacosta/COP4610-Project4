@@ -259,8 +259,37 @@ static int bitmap_first_unused(int start, int num, int nbits)
 // 'start' sector; return 0 if successful, -1 otherwise
 static int bitmap_reset(int start, int num, int ibit)
 {
-  /* YOUR CODE */
-  return -1;
+  /* YOUR CODE  Maurely Acosta*/
+  int number_bytes = ibit/8; // completed bytes before the one containing the reset bit
+  int remaining_bits = ibit % 8; // location of the bit to reset within the last byte
+  char bitmap_buf[SECTOR_SIZE];
+
+    if(number_bytes > SECTOR_SIZE*num){
+      //incorrect number of ibit because greater than the sector size.
+      dprintf("... Error: The ibit=%d passed to reset is too large for the sector \n" , ibit);
+      return -1;
+    }
+
+    while(number_bytes > SECTOR_SIZE){
+      number_bytes = number_bytes - SECTOR_SIZE; //Go to the last sector
+    }
+
+    if(Disk_Read(start, bitmap_buf) < 0){
+      dprintf("Error: failed reading the block %d\n" , start);
+      osErrno = E_GENERAL;
+      return -1;
+    }
+
+    static unsigned char mask[] = {127, 191, 223, 239, 247, 251, 253, 254};
+    bitmap_buf[number_bytes] = (bitmap_buf[number_bytes] & mask[remaining_bits]);
+
+    if(Disk_Write(start, bitmap_buf) < 0) {
+            dprintf("Error: failed writing the block %d\n" , start);
+            osErrno = E_GENERAL;
+            return -1;
+          }
+
+  return 0;
 }
 
 // return 1 if the file name is illegal; otherwise, return 0; legal
