@@ -551,7 +551,140 @@ int create_file_or_directory(int type, char* pathname)
 int remove_inode(int type, int parent_inode, int child_inode)
 {
   /* YOUR CODE */
-  return -1;
+  //load the child inode sector
+  int inode_sector = INODE_TABLE_START_SECTOR + child_inode / INODES_PER_SECTOR;
+
+  char inode_buffer[SECTOR_SIZE];
+  if(Disk_Read(inode_sector, inode_buffer) < 0){
+    return -1;
+  }
+  dprintf("Loading the inode table for child inode from disk sector %d\n", inode_sector);
+
+  // get the child inode
+  int inode_start_entry = (inode_sector - INODE_TABLE_START_SECTOR) * INODES_PER_SECTOR;
+
+  int offset = child_inode - inode_start_entry;
+
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* child = (inode_t*)(inode_buffer + offset * sizeof(inode_t));
+
+  //check the child inode for errors
+  if(child->type != type){ //If the type don't match the child type
+    return -3; //ERROR: wrong type
+  }
+
+  if(child->type == 1 && child->size > 0){ //Is the directory not empty?
+    return -2; //ERROR: directory not empty,
+  }
+
+  //Reclaim the data sectors of the child inode if the inode is a file
+  if(child->type == 0){ //If a directory is empty, delete it.
+    int i;
+    for(i = 0; i < MAX_SECTORS_PER_FILE; i++){ //Traverse all the sectors
+        if(child->data[i] > 0){ //Is there valid data in this sector that we need to remove?
+          bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, child->data[i]);
+          dprintf("Reseting the bit sector %d from the data index [%d] \n", child->data[i], i );
+        }
+      }
+  }
+
+  // Clear the child inode and write to disk
+  memset(child, 0, sizeof(inode_t));
+
+  if(Disk_Write(inode_sector, inode_buffer) < 0){
+    return -1;
+  }
+  dprintf("Update the disk sector %d\n", inode_sector);
+  bitmap_reset(INODE_BITMAP_START_SECTOR, INODE_BITMAP_SECTORS, child_inode);
+
+  //Update the parent inode
+  inode_sector = INODE_TABLE_START_SECTOR + parent_inode / INODES_PER_SECTOR;
+  if(Disk_Read(inode_sector, inode_buffer) < 0){
+    return -1;
+  }
+  dprintf("Load the inode table for the parent inode %d from disk the sector %d\n", parent_inode, inode_sector);
+
+  // get the parent inode
+  inode_start_entry = (inode_sector-INODE_TABLE_START_SECTOR) * INODES_PER_SECTOR;
+  offset = parent_inode - inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t* parent = (inode_t*)(inode_buffer + offset * sizeof(inode_t));
+  dprintf("Getting the parent inode %d (size=%d, type=%d)\n", parent_inode, parent->size, parent->type);
+
+  if(parent->type != 1) {
+    dprintf("Error: The parent inode is not a directory\n");
+    return -2;
+  }
+
+  //Find in the parent inode the dirent structure that contains the child inode
+  //Then swap it with the last dirent entry in the parent inode and decrement the size
+   char dirent_buffer[SECTOR_SIZE];
+    int group = 0;
+    int entry = 0;
+    dirent_t* current_dirent;
+
+  //Look for the last dirent entry in the parent inode
+  if(parent->size > 1){ // if there are more files and directories in the parent inode
+    int last_group = parent->size / DIRENTS_PER_SECTOR;
+    char last_dirent_buffer[SECTOR_SIZE];
+    int last_sector = parent->data[last_group];
+    if(Disk_Read(last_sector, last_dirent_buffer) < 0){ //Read the sector used by the last entry
+      return -1;
+    }
+
+    dprintf("Loading the disk sector %d corresponding to the last dirent entry in the group %d\n"
+    , parent->data[last_group], group);
+
+    //get the last dirent
+    int start_entry = last_group * DIRENTS_PER_SECTOR;
+    offset = parent->size - start_entry - 1;
+    //last dirent to swap with the dirent that we are deleting
+    dirent_t* last_dirent = (dirent_t*)(last_dirent_buffer + offset * sizeof(dirent_t));
+
+    //Find the sector where the child dirent is
+    for(group = 0; group<MAX_SECTORS_PER_FILE; group++){ //Iterate through all the groups in the parent inode
+      if(Disk_Read(parent->data[group], dirent_buffer) < 0){ //Read the sector in this group
+          return -1;
+      }
+      dprintf("Loading the disk sector %d for the dirent group %d\n", parent->data[last_group], group);
+      for(entry = 0; entry<DIRENTS_PER_SECTOR; entry++){ //All the dirents inside this group
+         current_dirent = (dirent_t*)(dirent_buffer+entry * sizeof(dirent_t));
+         if(current_dirent->inode == child_inode){
+
+            strncpy(current_dirent->fname, last_dirent->fname, MAX_NAME);
+            current_dirent->inode = last_dirent->inode;
+
+            char * temp = "";
+            strncpy(last_dirent->fname, temp, MAX_NAME);
+            last_dirent->inode = -1;
+
+            memset(last_dirent, 0 , sizeof(dirent_t));
+            //Update the sector with the removed node
+            if(Disk_Write(parent->data[group], dirent_buffer) < 0){
+              return -1;
+            }
+            dprintf("Updating the dirent %d (name='%s', inode=%d) to group %d,
+             updating the disk sector %d\n",
+            (group * 30) + entry, current_dirent->fname, current_dirent->inode, group, parent->data[group]);
+
+            if(Disk_Write(inode_sector, inode_buffer) < 0){ //Update the parent inode sector
+              return -1;
+            }
+            group = MAX_SECTORS_PER_FILE; //exit the outer loop
+            break;
+         }
+      }
+    }
+  }
+
+  // update parent inode and write to disk
+  parent->size--;
+  if(Disk_Write(inode_sector, inode_buffer) < 0){
+    return -1;
+  }
+  dprintf("Updating the parent inode on the disk sector %d\n", inode_sector);
+
+  return 0;
 }
 
 // representing an open file
