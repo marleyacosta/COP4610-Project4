@@ -723,10 +723,49 @@ int File_Create(char* file)
   return create_file_or_directory(0, file);
 }
 
+/*
+ * Reverse File_Create().
+ * This function:
+ * - delete the file referenced by file.
+ * - removes its name from the directory
+ * - frees up any data blocks and inodes used by the file
+ *
+ */
+
 int File_Unlink(char* file)
 {
   /* YOUR CODE */
-  return -1;
+  char file_name[255];
+  int  child_inode;
+  int  parent_inode = follow_path(file, &child_inode, file_name);
+
+  if (parent_inode < 0) {
+    osErrno = E_NO_SUCH_FILE;
+    return -1;
+  }
+  if(is_file_open(child_inode)) {
+    osErrno = E_FILE_IN_USE;
+    return -1;
+  }
+  int  child_inode_sector = child_inode / INODES_PER_SECTOR;
+  char child_inode_buffer[SECTOR_SIZE];
+  int  child_location_offset = child_inode % INODES_PER_SECTOR;
+  Disk_Read(child_inode_sector, child_inode_buffer);
+
+  inode_t *child = (inode_t *)(child_inode_buffer + child_location_offset * sizeof(inode_t));
+  if (child->type != 0) { // if not a file
+    return -2;
+  }
+  //free child sectors
+  for (int i = 0; i < child->size; i++) {
+    bitmap_reset(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, child->data[i]);
+  }
+  child->size = 0;
+
+
+  remove_inode(0, parent_inode, child_inode);
+
+  return 0;
 }
 
 int File_Open(char* file)
