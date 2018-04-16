@@ -298,8 +298,19 @@ static int bitmap_reset(int start, int num, int ibit)
 // should not be more than MAX_NAME-1 in length
 static int illegal_filename(char* name)
 {
-  /* YOUR CODE */
-  return 1;
+  /* YOUR CODE Maurely Acosta*/
+  if(strlen(name) > MAX_NAME - 1){
+    printf("ERROR: The file name is too long.\n");
+    return 1;
+  }else{
+    int i;
+    for(i = 0; i < strlen(name); i++){
+      char current = name[i];
+      if(!(isalpha(current) || isdigit(current) || current == '-' || current == '_' || current == '.'))
+        return 1;
+    }
+  }
+  return 0;
 }
 
 // return the child inode of the given file name 'fname' from the
