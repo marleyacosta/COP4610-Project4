@@ -949,13 +949,149 @@ int File_Open(char* file)
 int File_Read(int fd, void* buffer, int size)
 {
   /* YOUR CODE */
-  return -1;
+  if (!is_file_open(fd)) {
+    osErrno = E_BAD_FD;
+    return -1;
+  }
+  open_file_t *f = &open_files[fd];
+  if (f->pos == f->size) {
+    return 0;
+  }
+
+  //Using code from the File_Open method
+  // Load the disk sector containing the inode
+  int  inode_sector = INODE_TABLE_START_SECTOR + f->inode / INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+  if (Disk_Read(inode_sector, inode_buffer) < 0) {
+    osErrno = E_GENERAL;
+    return -1;
+  }
+  dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+
+  // get the inode
+  int inode_start_entry = (inode_sector - INODE_TABLE_START_SECTOR) * INODES_PER_SECTOR;
+  int offset            = f->inode - inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t *child = (inode_t *)(inode_buffer + offset * sizeof(inode_t));
+  //Done taking from File_Open
+
+  int  left            = size;
+  int  current_position_in_sector = f->pos % SECTOR_SIZE;
+  int  current_sector        = f->pos / SECTOR_SIZE;
+  int  out_pos         = 0;
+  char data_buf[SECTOR_SIZE];
+
+
+  while (left > 0 && f->pos < f->size) {
+    //read in sector, write to buffer, update left and pos
+    Disk_Read(child->data[current_sector], data_buf);
+    int to_read = 0;
+    if (left > SECTOR_SIZE) {
+      to_read = SECTOR_SIZE - current_position_in_sector;
+    }else{
+      to_read = left - current_position_in_sector;
+    }
+    memcpy(buffer, data_buf + current_position_in_sector, to_read);
+
+    left           -= to_read;
+    current_position_in_sector = 0;
+    f->pos         += to_read;
+    current_sector       += 1;
+    out_pos        += to_read;
+    if (f->pos > f->size) {
+      f->pos = f->size;
+    }
+    return(out_pos);
+  }
 }
 
+/*
+This method writes the size bytes from the buffer and writes them into the file
+referenced by fd.
+*/
 int File_Write(int fd, void* buffer, int size)
 {
   /* YOUR CODE */
-  return -1;
+  if (!is_file_open(fd)) {
+    dprintf("Error: Could not write to a file that is not open.\n");
+    osErrno = E_BAD_FD;
+    return -1;
+  }
+  open_file_t *f = &open_files[fd];
+  if (f->pos + size > MAX_SECTORS_PER_FILE * SECTOR_SIZE) {
+    dprintf("Error: The file is too big to write to.\n");
+    osErrno = E_FILE_TOO_BIG;
+    return -1;
+  }
+
+
+  // Load the disk sector containing the inode
+  int  inode_sector = INODE_TABLE_START_SECTOR + f->inode / INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+
+  if (Disk_Read(inode_sector, inode_buffer) < 0) {
+    osErrno = E_GENERAL;
+    return -1;
+  }
+  dprintf("Loading the inode table from the inode's disk sector %d\n", inode_sector);
+
+  // get the inode
+  int inode_start_entry = (inode_sector - INODE_TABLE_START_SECTOR) * INODES_PER_SECTOR;
+  int offset = f->inode - inode_start_entry;
+  assert(0 <= offset && offset < INODES_PER_SECTOR);
+  inode_t *child = (inode_t *)(inode_buffer + offset * sizeof(inode_t));
+
+  int allocated_sectors = (f->size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+  int needed_sectors = (size - (allocated_sectors * SECTOR_SIZE - f->pos) + SECTOR_SIZE - 1) / SECTOR_SIZE;
+
+  for (int i = allocated_sectors; i < allocated_sectors + needed_sectors; i++) {
+
+    int next = bitmap_first_unused(SECTOR_BITMAP_START_SECTOR, SECTOR_BITMAP_SECTORS, SECTOR_BITMAP_SIZE);
+    dprintf("Assigning  the block %d, to the file for writing\n", next);
+
+    if (next < 0) {
+      dprintf("Error: The disk ran out of space while allocating blocks to write to.\n");
+      osErrno = E_NO_SPACE;
+      return -1;
+    }
+    child->data[i] = next;
+  }
+  Disk_Write(inode_sector, inode_buffer);
+
+  allocated_sectors += needed_sectors;
+  f->size = f->pos + size;
+  child->size = f->size;
+
+  int  left = size;
+  int  current_position_in_sector = f->pos % SECTOR_SIZE;
+  int  current_sector = f->pos / SECTOR_SIZE;
+  int  in_pos = 0;
+  char data_buf[SECTOR_SIZE];
+
+  // Write out while still in allocated sectors
+  while (left > 0 && current_sector < allocated_sectors) {
+
+    //Read the sector, write to the buffer, and update the left and pos
+    Disk_Read(child->data[current_sector], data_buf);
+    int to_write = 0;
+    if (left > SECTOR_SIZE) {
+      to_write = SECTOR_SIZE - current_position_in_sector;
+    }else{
+      to_write = left - current_position_in_sector;
+    }
+    memcpy(data_buf + current_position_in_sector, buffer + in_pos, to_write);
+    Disk_Write(child->data[current_sector], data_buf);
+
+    left -= to_write;
+    current_position_in_sector = 0;
+    f->pos += to_write;
+    current_sector += 1;
+    in_pos += to_write;
+  }
+
+  int result = size - left;
+
+  return result;
 }
 
 int File_Seek(int fd, int offset)
