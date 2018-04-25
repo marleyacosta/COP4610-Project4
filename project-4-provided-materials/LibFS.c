@@ -954,27 +954,30 @@ int File_Read(int fd, void* buffer, int size)
     osErrno = E_BAD_FD;
     return -1;
   }
+
   open_file_t *f = &open_files[fd];
+
   if (f->pos == f->size) {
     return 0;
   }
 
-  //Using code from the File_Open method
+
   // Load the disk sector containing the inode
   int  inode_sector = INODE_TABLE_START_SECTOR + f->inode / INODES_PER_SECTOR;
   char inode_buffer[SECTOR_SIZE];
+
   if (Disk_Read(inode_sector, inode_buffer) < 0) {
     osErrno = E_GENERAL;
     return -1;
   }
-  dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
+  dprintf("Loading the inode table for inode from the disk sector %d\n", inode_sector);
 
   // get the inode
   int inode_start_entry = (inode_sector - INODE_TABLE_START_SECTOR) * INODES_PER_SECTOR;
   int offset            = f->inode - inode_start_entry;
   assert(0 <= offset && offset < INODES_PER_SECTOR);
   inode_t *child = (inode_t *)(inode_buffer + offset * sizeof(inode_t));
-  //Done taking from File_Open
+
 
   int  left            = size;
   int  current_position_in_sector = f->pos % SECTOR_SIZE;
@@ -986,23 +989,26 @@ int File_Read(int fd, void* buffer, int size)
   while (left > 0 && f->pos < f->size) {
     //read in sector, write to buffer, update left and pos
     Disk_Read(child->data[current_sector], data_buf);
+
     int to_read = 0;
+
     if (left > SECTOR_SIZE) {
       to_read = SECTOR_SIZE - current_position_in_sector;
-    }else{
+    }
+    else{
       to_read = left - current_position_in_sector;
     }
     memcpy(buffer, data_buf + current_position_in_sector, to_read);
 
-    left           -= to_read;
+    left -= to_read;
     current_position_in_sector = 0;
-    f->pos         += to_read;
-    current_sector       += 1;
-    out_pos        += to_read;
+    f->pos += to_read;
+    current_sector += 1;
+    out_pos += to_read;
     if (f->pos > f->size) {
       f->pos = f->size;
     }
-    return(out_pos);
+    return out_pos;
   }
 }
 
@@ -1143,13 +1149,13 @@ int Dir_Unlink(char* path)
   char path_name[MAX_PATH];
   int parent_inode = follow_path(path, &child_inode, path_name);
   if(strcmp("/", path) == 0){
-    osErrno = E_ROOT_DIR; 
-    return -1; 
+    osErrno = E_ROOT_DIR;
+    return -1;
   }
   if(parent_inode < 0){
-    osErrno = E_NO_SUCH_DIR; 
-    return -1; 
-  } 
+    osErrno = E_NO_SUCH_DIR;
+    return -1;
+  }
   if(remove_inode(1, parent_inode, child_inode) < 0){
     dprintf("Directory not empty/n");
     osErrno = E_DIR_NOT_EMPTY;
@@ -1161,20 +1167,20 @@ int Dir_Unlink(char* path)
 int Dir_Size(char* path)
 {
   /* YOUR CODE */
-  char path_name[MAX_PATH]; 
-  int child_inode; 
-  int parent_inode = follow_path(path, &child_inode, last_fname); 
+  char path_name[MAX_PATH];
+  int child_inode;
+  int parent_inode = follow_path(path, &child_inode, last_fname);
   if(parent_inode < 0){
-    osErrno = E_NO_SUCH_DIR; 
-    return -1; 
-  } 
-  if(child_indoe >= 0){
+    osErrno = E_NO_SUCH_DIR;
+    return -1;
+  }
+  if(child_inode >= 0){
     // load the disk sector containing the inode
     int inode_sector = INODE_TABLE_START_SECTOR + child_inode / INODES_PER_SECTOR;
     char inode_buffer[SECTOR_SIZE];
-    if(Disk_Read(inode_sector, inode_buffer) < 0) { 
-      osErrno = E_GENERAL; 
-      return -1; 
+    if(Disk_Read(inode_sector, inode_buffer) < 0) {
+      osErrno = E_GENERAL;
+      return -1;
     }
     dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
 
@@ -1187,7 +1193,7 @@ int Dir_Size(char* path)
 
     if(child->type != 1){
       dprintf("... is a file not a directory\n");
-      return -1; 
+      return -1;
     }
   }
   return child->size * (sizeof(dirent_t));
@@ -1196,5 +1202,57 @@ int Dir_Size(char* path)
 int Dir_Read(char* path, void* buffer, int size)
 {
   /* YOUR CODE */
-  return -1;
+  char child_name[16]; child_name[15] = '\0';
+  int  child_node;
+  int  parent_node = follow_path(path, &child_node, child_name);
+
+  dprintf("Dir_Read: Followed the path\n");
+
+  if (parent_node < 0) {
+    osErrno = E_NO_SUCH_DIR;
+    return -1;
+  }
+
+  int  inode_sector = INODE_TABLE_START_SECTOR + child_node / INODES_PER_SECTOR;
+  char inode_buffer[SECTOR_SIZE];
+
+  if (Disk_Read(inode_sector, inode_buffer) < 0) {
+    return -1;
+  }
+  int offset = child_node % INODES_PER_SECTOR;
+
+  inode_t *child = (inode_t *)(inode_buffer + offset * sizeof(inode_t));
+
+  int num_entries = child->size;
+
+  if (size < child->size * sizeof(dirent_t)) {
+
+    osErrno = E_BUFFER_TOO_SMALL;
+    return -1;
+  }
+
+  int out_pos = 0;
+  // Read sectors into buffer
+  // copy all dirents in full sectors
+  char sec_buf[SECTOR_SIZE];
+
+  for (int i = 0; i < child->size / DIRENTS_PER_SECTOR; i++) {
+
+    if (Disk_Read(child->data[i], sec_buf) < 0) {
+      return -1;
+    }
+    memcpy(buffer + out_pos, sec_buf, DIRENTS_PER_SECTOR * sizeof(dirent_t));
+
+    out_pos += DIRENTS_PER_SECTOR * sizeof(dirent_t);
+  }
+  //copy over the last, partially filled sector
+  int left = child->size % DIRENTS_PER_SECTOR;
+
+  if (left > 0) {
+    if (Disk_Read(child->data[child->size / DIRENTS_PER_SECTOR], sec_buf) < 0) {
+      return -1;
+    }
+    memcpy(buffer + out_pos, sec_buf, left * sizeof(dirent_t));
+  }
+  return child->size;
 }
