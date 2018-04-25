@@ -31,11 +31,11 @@ int main(int argc, char *argv[])
   fn = "/first-dir";
   if(Dir_Create(fn) < 0) printf("ERROR: can't create dir '%s'\n", fn);
   else printf("dir '%s' created successfully\n", fn);
-  
+
   fn = "/first-dir/second-dir";
   if(Dir_Create(fn) < 0) printf("ERROR: can't create dir '%s'\n", fn);
   else printf("dir '%s' created successfully\n", fn);
-  
+
   fn = "/first-file/second-dir";
   if(Dir_Create(fn) < 0) printf("ERROR: can't create dir '%s'\n", fn);
   else printf("dir '%s' created successfully\n", fn);
@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
   fn = "/first_dir/third*dir";
   if(Dir_Create(fn) < 0) printf("ERROR: can't create dir '%s'\n", fn);
   else printf("dir '%s' created successfully\n", fn);
-  
+
   fn = "/first-file";
   if(File_Unlink(fn) < 0) printf("ERROR: can't unlink file '%s'\n", fn);
   else printf("file '%s' unlinked successfully\n", fn);
@@ -70,14 +70,14 @@ int main(int argc, char *argv[])
   if(File_Write(fd, buf, 1024) != 1024)
     printf("ERROR: can't write 1024 bytes to fd=%d\n", fd);
   else printf("successfully wrote 1024 bytes to fd=%d\n", fd);
-  
+
   if(File_Close(fd) < 0) printf("ERROR: can't close fd %d\n", fd);
   else printf("fd %d closed successfully\n", fd);
-  
+
   if(FS_Sync() < 0) {
     printf("ERROR: can't sync file system to file '%s'\n", argv[1]);
     return -1;
   } else printf("file system sync'd to file '%s'\n", argv[1]);
-    
+
   return 0;
 }
