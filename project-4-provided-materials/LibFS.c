@@ -109,6 +109,16 @@ static char bs_filename[1024];
 
 /* the following functions are internal helper functions */
 
+int signum(int n) {
+  if (n == 0) {
+    return(0);
+  }else if (n > 0) {
+    return(1);
+  }else {
+    return(-1);
+  }
+}
+
 // check magic number in the superblock; return 1 if OK, and 0 if not
 static int check_magic()
 {
@@ -125,14 +135,13 @@ static int check_magic()
 static void bitmap_init(int start, int num, int nbits)
 {
   /* YOUR CODE  - Maurely Acosta*/
-  dprintf("Creating a bitmap starting at sector %d, %d sectors long,
-   %d bits are set to one\n", start, num, nbits);
+  dprintf("Creating a bitmap starting at sector %d, %d sectors long, %d bits are set to one\n", start, num, nbits);
 
   char bitmap_buf[SECTOR_SIZE];    //chars are size 1
 
   int sectors_set_to_one = nbits / 8 / SECTOR_SIZE; //number of sectors that are all 1
   int remaining_bytes = nbits / 8 % SECTOR_SIZE; //number of bytes on first sector after sectors_set_to_one
-  int sectors_set_to_zero = num - sectors_set_to_one - sgn(remaining_bytes); //number of sectors that are all 0
+  int sectors_set_to_zero = num - sectors_set_to_one - signum(remaining_bytes); //number of sectors that are all 0
 
   //all full sectors
   for (int i = 0; i < SECTOR_SIZE; i++) {
@@ -218,9 +227,9 @@ static int bitmap_first_unused(int start, int num, int nbits)
     for(a_byte = 0; a_byte < limit; a_byte++){ //Check each byte in each sector
       for(bit = 0; bit < 8; bit++){  //Checking each bit inside this byte
         location++;
-        if(!isBitSet(bitmap_buf[b], bit)){
+        if(!isBitSet(bitmap_buf[a_byte], bit)){
 
-          bitmap_buf[b] = setBit(bitmap_buf[b], bit);
+          bitmap_buf[a_byte] = setBit(bitmap_buf[a_byte], bit);
 
           if(Disk_Write(i, bitmap_buf) < 0) { //Write the sector back
             dprintf("Oops, failed writting the block %d\n" , i);
@@ -236,11 +245,11 @@ static int bitmap_first_unused(int start, int num, int nbits)
 
     //Do a last check
     //check the last bits in the last incompleted byte
-    if(final_block == 1){
+    if(last_block == 1){
       for(bit = 0; bit < remaining_bits ; bit++){  //Check the remaining bits in this byte
         location ++;
-        if(!isBitSet(bitmap_buf[b], bit)){
-           bitmap_buf[b] = setBit(bitmap_buf[b], bit); //Set this bit
+        if(!isBitSet(bitmap_buf[a_byte], bit)){
+           bitmap_buf[a_byte] = setBit(bitmap_buf[a_byte], bit); //Set this bit
 
           if(Disk_Write(i, bitmap_buf) < 0) { //Write the sector back
             dprintf("Oops, failed writting the block %d\n" , i);
@@ -664,8 +673,7 @@ int remove_inode(int type, int parent_inode, int child_inode)
             if(Disk_Write(parent->data[group], dirent_buffer) < 0){
               return -1;
             }
-            dprintf("Updating the dirent %d (name='%s', inode=%d) to group %d,
-             updating the disk sector %d\n",
+            dprintf("Updating the dirent %d (name='%s', inode=%d) to group %d, updating the disk sector %d\n",
             (group * 30) + entry, current_dirent->fname, current_dirent->inode, group, parent->data[group]);
 
             if(Disk_Write(inode_sector, inode_buffer) < 0){ //Update the parent inode sector
@@ -918,7 +926,11 @@ int File_Open(char* file)
     // load the disk sector containing the inode
     int inode_sector = INODE_TABLE_START_SECTOR+child_inode/INODES_PER_SECTOR;
     char inode_buffer[SECTOR_SIZE];
-    if(Disk_Read(inode_sector, inode_buffer) < 0) { osErrno = E_GENERAL; return -1; }
+
+    if(Disk_Read(inode_sector, inode_buffer) < 0) {
+       osErrno = E_GENERAL;
+       return -1;
+     }
     dprintf("... load inode table for inode from disk sector %d\n", inode_sector);
 
     // get the inode
@@ -940,11 +952,13 @@ int File_Open(char* file)
     open_files[fd].size = child->size;
     open_files[fd].pos = 0;
     return fd;
-  } else {
+  }
+  else {
     dprintf("... file '%s' is not found\n", file);
     osErrno = E_NO_SUCH_FILE;
     return -1;
   }
+  return -1;
 }
 
 int File_Read(int fd, void* buffer, int size)
@@ -1010,6 +1024,7 @@ int File_Read(int fd, void* buffer, int size)
     }
     return out_pos;
   }
+  return -1;
 }
 
 /*
@@ -1104,7 +1119,7 @@ int File_Write(int fd, void* buffer, int size)
 int File_Seek(int fd, int offset)
 {
   /* YOUR CODE */
-  open_file_t* f = open_files[fd];
+  open_file_t* f = &open_files[fd];
   if (is_file_open(f->inode) == 0){
     osErrno = E_BAD_FD;
     return -1;
@@ -1145,7 +1160,7 @@ int Dir_Create(char* path)
 int Dir_Unlink(char* path)
 {
   /* YOUR CODE */
-  int child_indoe; // maybe just child
+  int child_inode; // maybe just child
   char path_name[MAX_PATH];
   int parent_inode = follow_path(path, &child_inode, path_name);
   if(strcmp("/", path) == 0){
@@ -1169,7 +1184,8 @@ int Dir_Size(char* path)
   /* YOUR CODE */
   char path_name[MAX_PATH];
   int child_inode;
-  int parent_inode = follow_path(path, &child_inode, last_fname);
+  int parent_inode = follow_path(path, &child_inode, path_name);
+  int result = 0;
   if(parent_inode < 0){
     osErrno = E_NO_SUCH_DIR;
     return -1;
@@ -1195,8 +1211,11 @@ int Dir_Size(char* path)
       dprintf("... is a file not a directory\n");
       return -1;
     }
+    result = child->size * (sizeof(dirent_t));
   }
-  return child->size * (sizeof(dirent_t));
+
+
+  return result;
 }
 
 int Dir_Read(char* path, void* buffer, int size)
@@ -1222,8 +1241,6 @@ int Dir_Read(char* path, void* buffer, int size)
   int offset = child_node % INODES_PER_SECTOR;
 
   inode_t *child = (inode_t *)(inode_buffer + offset * sizeof(inode_t));
-
-  int num_entries = child->size;
 
   if (size < child->size * sizeof(dirent_t)) {
 
