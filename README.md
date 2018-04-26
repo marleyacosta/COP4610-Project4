@@ -3,8 +3,11 @@
 ## How to compile
 - In the command line type the following:
 > export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:.
+
 > sudo make reset
+
 > rm abc test
+
 > sudo make
 
 ## How to run
